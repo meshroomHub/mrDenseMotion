@@ -111,8 +111,8 @@ class DenseMotion(desc.Node):
             name="OpticalFlow",
             label="Optical Flow",
             description="Output optical flow images",
-            semantic="imageList",
-            value="{nodeCacheFolder}/*.exr",
+            semantic="image",
+            value=lambda attr: "{nodeCacheFolder}/<FILESTEM>.exr",
             group="",
         )
     ]
