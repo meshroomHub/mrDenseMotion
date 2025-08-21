@@ -7,14 +7,24 @@ from meshroom.core.utils import VERBOSE_LEVEL
 
 class RaftOFNodeSize(desc.MultiDynamicNodeSize):
     def computeSize(self, node):
+        from pathlib import Path
+        import itertools
+
         input_path_param = node.attribute(self._params[0])
         extension_param = node.attribute(self._params[1])
 
-        extension = extension_param.value
         input_path = input_path_param.value
-        image_paths = get_image_paths_list(input_path, extension)
+        extension = extension_param.value
+        include_suffixes = [extension.lower(), extension.upper()]
 
-        return(max(1, len(image_paths)))
+        size = 1
+        if Path(input_path).is_dir():
+            image_paths = list(itertools.chain(*(Path(input_path).glob(f'*.{suffix}') for suffix in include_suffixes)))
+            size = len(image_paths)
+        elif node.attribute(self._params[0]).isLink:
+            size = node.attribute(self._params[0]).getLinkParam().node.size
+        
+        return size
 
 
 class RaftOFBlockSize(desc.Parallelization):
@@ -209,12 +219,12 @@ def get_image_paths_list(input_path, extension):
     from pathlib import Path
     import itertools
 
-    include_suffices = [extension.lower(), extension.upper()]
+    include_suffixes = [extension.lower(), extension.upper()]
     image_paths = []
 
     if Path(input_path).is_dir():
-        image_paths = sorted(itertools.chain(*(Path(input_path).glob(f'*.{suffix}') for suffix in include_suffices)))
-    elif input_path[-4:].lower() == ".sfm":
+        image_paths = sorted(itertools.chain(*(Path(input_path).glob(f'*.{suffix}') for suffix in include_suffixes)))
+    elif input_path[-4:].lower() == ".sfm" or input_path[-4:].lower() == ".abc":
         if Path(input_path).exists():
             dataAV = sfmData.SfMData()
             if sfmDataIO.load(dataAV, input_path, sfmDataIO.ALL):
