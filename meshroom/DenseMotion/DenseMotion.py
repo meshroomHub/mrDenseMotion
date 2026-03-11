@@ -30,7 +30,7 @@ class DenseMotion(desc.Node):
         desc.File(
             name="inputImages",
             label="Input Images",
-            description="Input images to estimate the depth from, sfmData filepath",
+            description="sfmData filepath",
             value="",
         ),
         desc.FloatParam(

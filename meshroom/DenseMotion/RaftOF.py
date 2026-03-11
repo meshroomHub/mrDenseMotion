@@ -1,6 +1,5 @@
 __version__ = "2.0"
 
-from re import M
 from meshroom.core import desc
 from meshroom.core.utils import VERBOSE_LEVEL
 from pyalicevision import parallelization as avpar
@@ -32,7 +31,7 @@ class RaftOF(desc.Node):
         desc.File(
             name="inputImages",
             label="Input Images",
-            description="Input images to estimate the depth from, sfmData filepath",
+            description="sfmData filepath",
             value="",
         ),
         desc.File(
@@ -81,7 +80,7 @@ class RaftOF(desc.Node):
         desc.File(
             name="OpticalFlowUp",
             label="Optical Flow Up",
-            description="Output up optical flow images",
+            description="Upscaled optical flow images",
             semantic="image",
             value=lambda attr: "{nodeCacheFolder}/<FILESTEM>.exr",
         ),
