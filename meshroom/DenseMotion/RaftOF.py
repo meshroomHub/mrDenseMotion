@@ -1,30 +1,8 @@
-__version__ = "1.0"
+__version__ = "2.0"
 
-from re import M
 from meshroom.core import desc
 from meshroom.core.utils import VERBOSE_LEVEL
-
-
-class RaftOFNodeSize(desc.MultiDynamicNodeSize):
-    def computeSize(self, node):
-        from pathlib import Path
-        import itertools
-
-        input_path_param = node.attribute(self._params[0])
-        extension_param = node.attribute(self._params[1])
-
-        input_path = input_path_param.value
-        extension = extension_param.value
-        include_suffixes = [extension.lower(), extension.upper()]
-
-        size = 1
-        if Path(input_path).is_dir():
-            image_paths = list(itertools.chain(*(Path(input_path).glob(f'*.{suffix}') for suffix in include_suffixes)))
-            size = len(image_paths)
-        elif node.attribute(self._params[0]).isLink:
-            size = node.attribute(self._params[0]).getLinkParam().node.size
-        
-        return size
+from pyalicevision import parallelization as avpar
 
 
 class RaftOFBlockSize(desc.Parallelization):
@@ -46,24 +24,15 @@ class RaftOF(desc.Node):
     
     gpu = desc.Level.INTENSIVE
 
-    size = RaftOFNodeSize(['inputImages', 'inputExtension'])
+    size = avpar.DynamicViewsSize("inputImages")
     parallelization = RaftOFBlockSize()
 
     inputs = [
         desc.File(
             name="inputImages",
             label="Input Images",
-            description="Input images to estimate the depth from. Folder path or sfmData filepath",
+            description="sfmData filepath",
             value="",
-        ),
-        desc.ChoiceParam(
-            name="inputExtension",
-            label="Input Extension",
-            description="Extension of the input images. This will be used to determine which images are to be used if \n"
-                        "a directory is provided as the input. If \"\" is selected, the provided input will be used as such.",
-            values=["jpg", "jpeg", "png", "exr"],
-            value="exr",
-            exclusive=True,
         ),
         desc.File(
             name="modelPath",
@@ -109,20 +78,18 @@ class RaftOF(desc.Node):
             value="{nodeCacheFolder}",
         ),
         desc.File(
-            name="OpticalFlow",
-            label="Optical Flow",
-            description="Output optical flow images",
+            name="OpticalFlowUp",
+            label="Optical Flow Up",
+            description="Upscaled optical flow images",
             semantic="image",
             value=lambda attr: "{nodeCacheFolder}/<FILESTEM>.exr",
-            group="",
-        )
+        ),
     ]
 
     def preprocess(self, node):
-        extension = node.inputExtension.value
         input_path = node.inputImages.value
 
-        image_paths = get_image_paths_list(input_path, extension)
+        image_paths = get_image_paths_list(input_path)
 
         if len(image_paths) == 0:
             raise FileNotFoundError(f'No image files found in {input_path}')
@@ -167,11 +134,12 @@ class RaftOF(desc.Node):
             chunk.logger.info(f'Starting computation on chunk {chunk.range.iteration + 1}/{chunk.range.fullSize // chunk.range.blockSize + int(chunk.range.fullSize != chunk.range.blockSize)}...')
 
             for idx, path in enumerate(chunk_image_paths):
-                if idx > 0:
+                if idx < len(chunk_image_paths) - 1:
                     with torch.no_grad():
-                        image1, h_ori, w_ori, pixelAspectRatio, orientation = image.loadImage(str(chunk_image_paths[idx - 1]), True)
-                        image2, h_ori, w_ori, pixelAspectRatio, orientation = image.loadImage(str(chunk_image_paths[idx]), True)
+                        image1, h_ori, w_ori, pixelAspectRatio, orientation = image.loadImage(str(chunk_image_paths[idx]), True)
+                        image2, h_ori, w_ori, pixelAspectRatio, orientation = image.loadImage(str(chunk_image_paths[idx + 1]), True)
 
+                        scale = 1.0
                         if max(h_ori, w_ori) > chunk.node.maxImageSize.value:
                             maxDim = float(max(h_ori, w_ori))
                             scale = float(chunk.node.maxImageSize.value) / maxDim
@@ -197,34 +165,36 @@ class RaftOF(desc.Node):
                         flow_low, flow_up = model(image1, image2, iters=chunk.node.IterationNumber.value, test_mode=True)
                         flow_up = padder.unpad(flow_up)
                         flow_up = flow_up[0].permute(1,2,0).cpu().numpy()
-                        flow_out = flow_up.copy()
+                        flow_up_out = flow_up.copy() / scale
+                        flow_low = padder.unpad(flow_low)
+                        flow_low = flow_low[0].permute(1,2,0).cpu().numpy()
+                        flow_low_out = flow_low.copy() / scale
 
-                        h,w,_ = flow_out.shape
-                        nc = np.zeros((h,w,1), dtype=flow_out.dtype)
-                        flow_out = np.concatenate((flow_out,nc), axis=2)
+                        h,w,_ = flow_up_out.shape
+                        nc = np.zeros((h,w,1), dtype=flow_up_out.dtype)
+                        flow_up_out = np.concatenate((flow_up_out,nc), axis=2)
+                        h,w,_ = flow_low_out.shape
+                        nc = np.zeros((h,w,1), dtype=flow_low_out.dtype)
+                        flow_low_out = np.concatenate((flow_low_out,nc), axis=2)
 
                         outputDirPath = Path(chunk.node.output.value)
                         image_stem = Path(chunk_image_paths[idx]).stem
-                        of_file_name = image_stem + ".exr"
+                        ofup_file_name = image_stem + ".exr"
 
-                        image.writeImage(str(outputDirPath / of_file_name), flow_out, h_ori, w_ori, orientation, pixelAspectRatio)
+                        image.writeImage(str(outputDirPath / ofup_file_name), flow_up_out, h_ori, w_ori, orientation, pixelAspectRatio)
             
-            chunk.logger.info('Publish end')
+            chunk.logger.info('RaftOF end')
         finally:
             chunk.logManager.end()
 
-def get_image_paths_list(input_path, extension):
+def get_image_paths_list(input_path):
     from pyalicevision import sfmData
     from pyalicevision import sfmDataIO
     from pathlib import Path
-    import itertools
 
-    include_suffixes = [extension.lower(), extension.upper()]
     image_paths = []
 
-    if Path(input_path).is_dir():
-        image_paths = sorted(itertools.chain(*(Path(input_path).glob(f'*.{suffix}') for suffix in include_suffixes)))
-    elif Path(input_path).suffix.lower() in [".sfm", ".abc"]:
+    if Path(input_path).suffix.lower() in [".sfm", ".abc"]:
         if Path(input_path).exists():
             dataAV = sfmData.SfMData()
             if sfmDataIO.load(dataAV, input_path, sfmDataIO.ALL):
