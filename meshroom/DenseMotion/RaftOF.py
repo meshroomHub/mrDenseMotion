@@ -1,4 +1,4 @@
-__version__ = "2.0"
+__version__ = "2.1"
 
 from meshroom.core import desc
 from meshroom.core.utils import VERBOSE_LEVEL
@@ -54,6 +54,12 @@ class RaftOF(desc.Node):
             description="Number of iterations.",
             range=(1, 50, 1),
         ),
+        desc.BoolParam(
+            name="computeBackward",
+            label="Compute Backward Flow",
+            description="Also compute the backward flow (frame t+1 to frame t), written as <FILESTEM>_bw.exr for frame t+1.",
+            value=False,
+        ),
         desc.IntParam(
             name="blockSize",
             label="Block Size",
@@ -83,6 +89,14 @@ class RaftOF(desc.Node):
             description="Upscaled optical flow images",
             semantic="image",
             value=lambda attr: "{nodeCacheFolder}/<FILESTEM>.exr",
+        ),
+        desc.File(
+            name="OpticalFlowBackward",
+            label="Optical Flow Backward",
+            description="Backward optical flow images (frame t to frame t-1).",
+            semantic="image",
+            value=lambda attr: "{nodeCacheFolder}/<FILESTEM>_bw.exr",
+            enabled=lambda node: node.computeBackward.value,
         ),
     ]
 
@@ -173,6 +187,13 @@ class RaftOF(desc.Node):
                         ofup_file_name = image_stem + ".exr"
 
                         image.writeImage(str(outputDirPath / ofup_file_name), flow_up_out, h_ori, w_ori, orientation, pixelAspectRatio)
+
+                        if chunk.node.computeBackward.value:
+                            _, flow_bw = model(image2, image1, iters=chunk.node.IterationNumber.value, test_mode=True)
+                            flow_bw = padder.unpad(flow_bw)[0].permute(1,2,0).contiguous().cpu().numpy() / scale
+                            flow_bw = np.concatenate((flow_bw, np.zeros_like(flow_bw[:,:,:1])), axis=2)
+                            bw_file_name = Path(chunk_image_paths[idx + 1]).stem + "_bw.exr"
+                            image.writeImage(str(outputDirPath / bw_file_name), flow_bw, h_ori, w_ori, orientation, pixelAspectRatio)
             
             chunk.logger.info('RaftOF end')
         finally:
