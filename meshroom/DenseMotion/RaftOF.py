@@ -118,6 +118,8 @@ class RaftOF(desc.Node):
             frameStop = chunk.range.end if chunk.range.iteration == chunk.range.fullSize-1 else chunk.range.end + 1
 
             chunk_image_paths_full = get_image_paths_list(chunk.node.inputImages.value)
+            if not chunk_image_paths_full:
+                raise FileNotFoundError(f'No image files found in {chunk.node.inputImages.value}')
             chunk_image_paths = chunk_image_paths_full[chunk.range.start:frameStop]
 
             parser = argparse.ArgumentParser()
