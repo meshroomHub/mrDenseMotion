@@ -88,7 +88,7 @@ class RaftOF(desc.Node):
             label="Optical Flow Up",
             description="Upscaled optical flow images",
             semantic="image",
-            value=lambda attr: "{nodeCacheFolder}/<FILESTEM>.exr",
+            value=lambda attr: "{nodeCacheFolder}/<FILESTEM>_fw.exr",
         ),
         desc.File(
             name="OpticalFlowBackward",
@@ -186,7 +186,7 @@ class RaftOF(desc.Node):
 
                         outputDirPath = Path(chunk.node.output.value)
                         image_stem = Path(chunk_image_paths[idx]).stem
-                        ofup_file_name = image_stem + ".exr"
+                        ofup_file_name = image_stem + "_fw.exr"
 
                         image.writeImage(str(outputDirPath / ofup_file_name), flow_up_out, h_ori, w_ori, orientation, pixelAspectRatio)
 
