@@ -1,4 +1,4 @@
-__version__ = "2.0"
+__version__ = "2.1"
 
 from meshroom.core import desc
 from meshroom.core.utils import VERBOSE_LEVEL
@@ -54,6 +54,12 @@ class RaftOF(desc.Node):
             description="Number of iterations.",
             range=(1, 50, 1),
         ),
+        desc.BoolParam(
+            name="computeBackward",
+            label="Compute Backward Flow",
+            description="Also compute the backward flow (frame t+1 to frame t), written as <FILESTEM>_bw.exr for frame t+1.",
+            value=False,
+        ),
         desc.IntParam(
             name="blockSize",
             label="Block Size",
@@ -82,19 +88,17 @@ class RaftOF(desc.Node):
             label="Optical Flow Up",
             description="Upscaled optical flow images",
             semantic="image",
-            value=lambda attr: "{nodeCacheFolder}/<FILESTEM>.exr",
+            value=lambda attr: "{nodeCacheFolder}/<FILESTEM>_fw.exr",
+        ),
+        desc.File(
+            name="OpticalFlowBackward",
+            label="Optical Flow Backward",
+            description="Backward optical flow images (frame t to frame t-1).",
+            semantic="image",
+            value=lambda attr: "{nodeCacheFolder}/<FILESTEM>_bw.exr",
+            enabled=lambda node: node.computeBackward.value,
         ),
     ]
-
-    def preprocess(self, node):
-        input_path = node.inputImages.value
-
-        image_paths = get_image_paths_list(input_path)
-
-        if len(image_paths) == 0:
-            raise FileNotFoundError(f'No image files found in {input_path}')
-
-        self.image_paths = image_paths
 
     def processChunk(self, chunk):
         from raft import RAFT
@@ -113,7 +117,10 @@ class RaftOF(desc.Node):
 
             frameStop = chunk.range.end if chunk.range.iteration == chunk.range.fullSize-1 else chunk.range.end + 1
 
-            chunk_image_paths = self.image_paths[chunk.range.start:frameStop]
+            chunk_image_paths_full = get_image_paths_list(chunk.node.inputImages.value)
+            if not chunk_image_paths_full:
+                raise FileNotFoundError(f'No image files found in {chunk.node.inputImages.value}')
+            chunk_image_paths = chunk_image_paths_full[chunk.range.start:frameStop]
 
             parser = argparse.ArgumentParser()
             parser.add_argument('--model', help="restore checkpoint")
@@ -179,9 +186,16 @@ class RaftOF(desc.Node):
 
                         outputDirPath = Path(chunk.node.output.value)
                         image_stem = Path(chunk_image_paths[idx]).stem
-                        ofup_file_name = image_stem + ".exr"
+                        ofup_file_name = image_stem + "_fw.exr"
 
                         image.writeImage(str(outputDirPath / ofup_file_name), flow_up_out, h_ori, w_ori, orientation, pixelAspectRatio)
+
+                        if chunk.node.computeBackward.value:
+                            _, flow_bw = model(image2, image1, iters=chunk.node.IterationNumber.value, test_mode=True)
+                            flow_bw = padder.unpad(flow_bw)[0].permute(1,2,0).contiguous().cpu().numpy() / scale
+                            flow_bw = np.concatenate((flow_bw, np.zeros_like(flow_bw[:,:,:1])), axis=2)
+                            bw_file_name = Path(chunk_image_paths[idx + 1]).stem + "_bw.exr"
+                            image.writeImage(str(outputDirPath / bw_file_name), flow_bw, h_ori, w_ori, orientation, pixelAspectRatio)
             
             chunk.logger.info('RaftOF end')
         finally:
@@ -191,10 +205,11 @@ def get_image_paths_list(input_path):
     from pyalicevision import sfmData
     from pyalicevision import sfmDataIO
     from pathlib import Path
+    from img_proc.sfmData import isSfmDataFile
 
     image_paths = []
 
-    if Path(input_path).suffix.lower() in [".sfm", ".abc"]:
+    if isSfmDataFile(input_path):
         if Path(input_path).exists():
             dataAV = sfmData.SfMData()
             if sfmDataIO.load(dataAV, input_path, sfmDataIO.ALL):
@@ -203,5 +218,5 @@ def get_image_paths_list(input_path):
                     image_paths.append(Path(v.getImage().getImagePath()))
             image_paths.sort()
     else:
-        raise ValueError(f"Input path '{input_path}' is not a valid path (folder or sfmData file).")
+        raise ValueError(f"Input path '{input_path}' is not a valid path (sfmData file).")
     return image_paths
