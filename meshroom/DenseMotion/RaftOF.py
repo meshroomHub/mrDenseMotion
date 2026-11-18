@@ -191,12 +191,22 @@ class RaftOF(desc.Node):
 
                         image.writeImage(str(outputDirPath / ofup_file_name), flow_up_out, h_ori, w_ori, orientation, pixelAspectRatio)
 
+                        # Last image of the sequence has no successor: write a black forward flow
+                        if chunk.range.start + idx + 1 == len(chunk_image_paths_full) - 1:
+                            last_fw_file_name = Path(chunk_image_paths[idx + 1]).stem + "_fw.exr"
+                            image.writeImage(str(outputDirPath / last_fw_file_name), np.zeros_like(flow_up_out), h_ori, w_ori, orientation, pixelAspectRatio)
+
                         if chunk.node.computeBackward.value:
                             _, flow_bw = model(image2, image1, iters=chunk.node.IterationNumber.value, test_mode=True)
                             flow_bw = padder.unpad(flow_bw)[0].permute(1,2,0).contiguous().cpu().numpy() / scale
                             flow_bw = np.concatenate((flow_bw, np.zeros_like(flow_bw[:,:,:1])), axis=2)
                             bw_file_name = Path(chunk_image_paths[idx + 1]).stem + "_bw.exr"
                             image.writeImage(str(outputDirPath / bw_file_name), flow_bw, h_ori, w_ori, orientation, pixelAspectRatio)
+
+                            # First image of the sequence has no predecessor: write a black backward flow
+                            if chunk.range.start + idx == 0:
+                                first_bw_file_name = Path(chunk_image_paths[idx]).stem + "_bw.exr"
+                                image.writeImage(str(outputDirPath / first_bw_file_name), np.zeros_like(flow_bw), h_ori, w_ori, orientation, pixelAspectRatio)
             
             chunk.logger.info('RaftOF end')
         finally:
