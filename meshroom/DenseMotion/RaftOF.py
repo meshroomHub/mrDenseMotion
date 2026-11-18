@@ -110,6 +110,7 @@ class RaftOF(desc.Node):
         import numpy as np
         from pathlib import Path
         import OpenImageIO as oiio
+        from img_proc.sfmData import get_image_paths_list
         try:
             chunk.logManager.start(chunk.node.verboseLevel.value)
             if not chunk.node.inputImages.value:
@@ -200,23 +201,3 @@ class RaftOF(desc.Node):
             chunk.logger.info('RaftOF end')
         finally:
             chunk.logManager.end()
-
-def get_image_paths_list(input_path):
-    from pyalicevision import sfmData
-    from pyalicevision import sfmDataIO
-    from pathlib import Path
-    from img_proc.sfmData import isSfmDataFile
-
-    image_paths = []
-
-    if isSfmDataFile(input_path):
-        if Path(input_path).exists():
-            dataAV = sfmData.SfMData()
-            if sfmDataIO.load(dataAV, input_path, sfmDataIO.ALL):
-                views = dataAV.getViews()
-                for id, v in views.items():
-                    image_paths.append(Path(v.getImage().getImagePath()))
-            image_paths.sort()
-    else:
-        raise ValueError(f"Input path '{input_path}' is not a valid path (sfmData file).")
-    return image_paths
