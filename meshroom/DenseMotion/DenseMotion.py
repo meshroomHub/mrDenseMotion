@@ -93,22 +93,13 @@ class DenseMotion(desc.Node):
         )
     ]
 
-    def preprocess(self, node):
-        input_path = node.inputImages.value
-
-        image_paths = get_image_paths_list(input_path)
-
-        if len(image_paths) == 0:
-            raise FileNotFoundError(f'No image files found in {input_path}')
-
-        self.image_paths = image_paths
-
     def processChunk(self, chunk):
         import cv2 as cv
         from img_proc import image
         import os
         import numpy as np
         from pathlib import Path
+        from img_proc.sfmData import get_image_paths_list
         try:
             chunk.logManager.start(chunk.node.verboseLevel.value)
             if not chunk.node.inputImages.value:
@@ -116,7 +107,10 @@ class DenseMotion(desc.Node):
 
             frameStop = chunk.range.end if chunk.range.iteration == chunk.range.fullSize-1 else chunk.range.end + 1
 
-            chunk_image_paths = self.image_paths[chunk.range.start:frameStop]
+            chunk_image_paths_full = get_image_paths_list(chunk.node.inputImages.value)
+            if not chunk_image_paths_full:
+                raise FileNotFoundError(f'No image files found in {chunk.node.inputImages.value}')
+            chunk_image_paths = chunk_image_paths_full[chunk.range.start:frameStop]
 
             # computation
             chunk.logger.info(f'Starting computation on chunk {chunk.range.iteration + 1}/{chunk.range.fullSize // chunk.range.blockSize + int(chunk.range.fullSize != chunk.range.blockSize)}...')
@@ -149,22 +143,3 @@ class DenseMotion(desc.Node):
             chunk.logger.info('Publish end')
         finally:
             chunk.logManager.end()
-
-def get_image_paths_list(input_path):
-    from pyalicevision import sfmData
-    from pyalicevision import sfmDataIO
-    from pathlib import Path
-
-    image_paths = []
-
-    if Path(input_path).suffix.lower() in [".sfm", ".abc"]:
-        if Path(input_path).exists():
-            dataAV = sfmData.SfMData()
-            if sfmDataIO.load(dataAV, input_path, sfmDataIO.ALL):
-                views = dataAV.getViews()
-                for id, v in views.items():
-                    image_paths.append(Path(v.getImage().getImagePath()))
-            image_paths.sort()
-    else:
-        raise ValueError(f"Input path '{input_path}' is not a valid path (folder or sfmData file).")
-    return image_paths
